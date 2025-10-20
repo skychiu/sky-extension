@@ -1,0 +1,16 @@
+data
+tmp
+.idea
+.ipynb_checkpoints
+__pycache__
+.env
+test/tmp.py
+test.*
+env/dev.local.env
+*.DS_Store
+/venv
+test*.*
+test/
+test
+.cache
+logs
