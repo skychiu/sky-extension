@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>ExtensionInstallForcelist</key>
+    <array>
+      <string>jepglbbfiihdophangpeolapcmokppme;file:///Library/Application%20Support/ChromeExtensions/update.xml
+      </string>
+    </array>
+    <key>ExtensionSettings</key>
+    <dict>
+      <key>jepglbbfiihdophangpeolapcmokppme</key>
+      <dict>
+        <key>installation_mode</key>
+        <string>force_installed</string>
+        <key>update_url</key>
+        <string>file:///Library/Application%20Support/ChromeExtensions/update.xml</string>
+        <key>allowed_in_incognito</key>
+        <true/>
+      </dict>
+    </dict>
+  </dict>
+</plist>
