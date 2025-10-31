@@ -1,0 +1,230 @@
+#!/bin/bash
+
+# Chrome Extension Force Installer for macOS
+# This script must be run with sudo privileges
+
+set -e  # Exit on error
+
+# Color codes for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Check if running as root
+if [[ $EUID -ne 0 ]]; then
+   echo -e "${RED}This script must be run with sudo privileges${NC}"
+   echo "Usage: sudo ./setup_extension.sh /path/to/unpacked/extension"
+   exit 1
+fi
+
+# Check if extension directory is provided
+if [ -z "$1" ]; then
+    echo -e "${RED}Error: Please provide the path to the unpacked extension directory${NC}"
+    echo "Usage: sudo ./setup_extension.sh /path/to/unpacked/extension"
+    exit 1
+fi
+
+EXTENSION_DIR="$1"
+
+# Verify extension directory exists and contains manifest.json
+if [ ! -d "$EXTENSION_DIR" ]; then
+    echo -e "${RED}Error: Directory '$EXTENSION_DIR' does not exist${NC}"
+    exit 1
+fi
+
+if [ ! -f "$EXTENSION_DIR/manifest.json" ]; then
+    echo -e "${RED}Error: No manifest.json found in '$EXTENSION_DIR'${NC}"
+    exit 1
+fi
+
+# Create log file
+LOG_FILE="/var/log/chrome_extension_install_$(date +%Y%m%d_%H%M%S).log"
+echo "Chrome Extension Installation Log - $(date)" > "$LOG_FILE"
+echo "Extension Directory: $EXTENSION_DIR" >> "$LOG_FILE"
+echo "----------------------------------------" >> "$LOG_FILE"
+
+# Function to log actions
+log_action() {
+    echo -e "${GREEN}$1${NC}"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
+}
+
+# Create system extension directory
+SYSTEM_EXT_DIR="/Library/Application Support/Google/Chrome/Extensions"
+EXTENSION_NAME="HelloWorldExtension"
+INSTALL_DIR="$SYSTEM_EXT_DIR/$EXTENSION_NAME"
+
+log_action "Creating system extension directory..."
+mkdir -p "$SYSTEM_EXT_DIR"
+
+# Copy extension files
+log_action "Copying extension files to system directory..."
+if [ -d "$INSTALL_DIR" ]; then
+    log_action "Removing existing installation..."
+    rm -rf "$INSTALL_DIR"
+fi
+cp -R "$EXTENSION_DIR" "$INSTALL_DIR"
+
+# Generate extension ID (using a fixed key for consistency)
+# This key will generate a specific extension ID
+EXTENSION_KEY="MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq7z7V1FpRil6nfqS0zHKZhQpVNhD3XV5xGxYl3MpI3MHLQP2OP7yOYjEa5i8s3PqMfyVWpbbHJygmq5BUqJWQXPGvO+NFPyPEzLJr0kgJcL9OFNMZ7lqq4nRBKKQvGE1OkcFe9YNvNkcx5D8A6qgMDI1VmCvZTbvVoYFtCH8BXgRmXu8jLJF7VkxNvyM+ob+6PKbHtKvo6KQh8JM8SUlm1j4UtPvvLXlCJhWGYVvSlzP8s+ZmallmbFIOK9X4qoqnhPfeCqKpBQnm1pAXxKjXYdLvRAYkp7KW8jrZJxMGqHBeRiAH1OaHEWqV7plhelK0h7nLaxW3SZpFfDQYwIDAQAB"
+EXTENSION_ID="aclhlfnhabhmckfphebadpjmabgpcdpo"
+
+# Update manifest.json with the key
+log_action "Updating manifest.json with extension key..."
+MANIFEST_FILE="$INSTALL_DIR/manifest.json"
+TEMP_MANIFEST="/tmp/manifest_temp.json"
+
+# Use Python to add the key to manifest.json
+python3 -c "
+import json
+with open('$MANIFEST_FILE', 'r') as f:
+    manifest = json.load(f)
+manifest['key'] = '$EXTENSION_KEY'
+with open('$TEMP_MANIFEST', 'w') as f:
+    json.dump(manifest, f, indent=2)
+"
+mv "$TEMP_MANIFEST" "$MANIFEST_FILE"
+
+# Set proper permissions
+log_action "Setting proper permissions..."
+chmod -R 755 "$INSTALL_DIR"
+chown -R root:wheel "$INSTALL_DIR"
+
+# Create Chrome policy directory
+CHROME_POLICY_DIR="/Library/Managed Preferences"
+mkdir -p "$CHROME_POLICY_DIR"
+
+# Create or update Chrome policy plist
+PLIST_FILE="$CHROME_POLICY_DIR/com.google.Chrome.plist"
+log_action "Creating Chrome policy configuration..."
+
+# Create the plist content
+cat > /tmp/chrome_policy.plist << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>ExtensionInstallForcelist</key>
+    <array>
+        <string>$EXTENSION_ID;file://$INSTALL_DIR</string>
+    </array>
+    <key>ExtensionInstallAllowlist</key>
+    <array>
+        <string>$EXTENSION_ID</string>
+    </array>
+    <key>ExtensionSettings</key>
+    <dict>
+        <key>$EXTENSION_ID</key>
+        <dict>
+            <key>installation_mode</key>
+            <string>force_installed</string>
+            <key>update_url</key>
+            <string>file://$INSTALL_DIR</string>
+            <key>allowed_permissions</key>
+            <array>
+                <string>all</string>
+            </array>
+        </dict>
+    </dict>
+</dict>
+</plist>
+EOF
+
+# Backup existing plist if it exists
+if [ -f "$PLIST_FILE" ]; then
+    BACKUP_FILE="${PLIST_FILE}.backup_$(date +%Y%m%d_%H%M%S)"
+    log_action "Backing up existing policy file to $BACKUP_FILE"
+    cp "$PLIST_FILE" "$BACKUP_FILE"
+    echo "BACKUP_FILE=$BACKUP_FILE" >> "$LOG_FILE"
+fi
+
+# Install the plist
+mv /tmp/chrome_policy.plist "$PLIST_FILE"
+chmod 644 "$PLIST_FILE"
+chown root:wheel "$PLIST_FILE"
+
+# Create uninstall script
+UNINSTALL_SCRIPT="/usr/local/bin/uninstall_chrome_extension.sh"
+log_action "Creating uninstall script at $UNINSTALL_SCRIPT"
+
+cat > "$UNINSTALL_SCRIPT" << 'UNINSTALL_EOF'
+#!/bin/bash
+
+# Chrome Extension Uninstaller
+# Auto-generated by setup_extension.sh
+
+set -e
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# Check if running as root
+if [[ $EUID -ne 0 ]]; then
+   echo -e "${RED}This script must be run with sudo privileges${NC}"
+   exit 1
+fi
+
+echo -e "${YELLOW}Chrome Extension Uninstaller${NC}"
+echo "This will remove the force-installed Chrome extension."
+read -p "Are you sure you want to continue? (y/N) " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "Uninstall cancelled."
+    exit 0
+fi
+
+# Remove extension directory
+INSTALL_DIR="/Library/Application Support/Google/Chrome/Extensions/HelloWorldExtension"
+if [ -d "$INSTALL_DIR" ]; then
+    echo -e "${GREEN}Removing extension files...${NC}"
+    rm -rf "$INSTALL_DIR"
+fi
+
+# Remove or restore Chrome policy
+PLIST_FILE="/Library/Managed Preferences/com.google.Chrome.plist"
+if [ -f "$PLIST_FILE" ]; then
+    echo -e "${GREEN}Removing Chrome policy...${NC}"
+    rm -f "$PLIST_FILE"
+fi
+
+# Kill Chrome to force reload policies
+echo -e "${GREEN}Restarting Chrome processes...${NC}"
+killall "Google Chrome" 2>/dev/null || true
+
+echo -e "${GREEN}✓ Extension successfully uninstalled!${NC}"
+echo "Please restart Chrome for changes to take full effect."
+UNINSTALL_EOF
+
+chmod 755 "$UNINSTALL_SCRIPT"
+
+# Log final details
+echo "EXTENSION_ID=$EXTENSION_ID" >> "$LOG_FILE"
+echo "INSTALL_DIR=$INSTALL_DIR" >> "$LOG_FILE"
+echo "PLIST_FILE=$PLIST_FILE" >> "$LOG_FILE"
+echo "UNINSTALL_SCRIPT=$UNINSTALL_SCRIPT" >> "$LOG_FILE"
+
+# Kill Chrome to force reload policies
+log_action "Restarting Chrome processes..."
+killall "Google Chrome" 2>/dev/null || true
+
+# Success message
+echo ""
+echo -e "${GREEN}✓ Extension successfully installed!${NC}"
+echo ""
+echo -e "${YELLOW}Installation Details:${NC}"
+echo "  Extension ID: $EXTENSION_ID"
+echo "  Install Location: $INSTALL_DIR"
+echo "  Policy File: $PLIST_FILE"
+echo "  Log File: $LOG_FILE"
+echo "  Uninstall Script: $UNINSTALL_SCRIPT"
+echo ""
+echo -e "${YELLOW}Next Steps:${NC}"
+echo "1. Restart Chrome completely"
+echo "2. The extension will appear in all profiles automatically"
+echo "3. Users cannot disable or remove this extension"
+echo ""
+echo -e "To uninstall later, run: ${GREEN}sudo $UNINSTALL_SCRIPT${NC}"
