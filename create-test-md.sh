@@ -137,6 +137,9 @@ for file in "${input_files[@]}"; do
     # Read and append the file content
     if [ -f "$file" ]; then
         cat "$file" >> "$output_file"
+        # Ensure there's a newline at the end of the file content
+        # This handles files that don't end with a newline
+        tail -c1 "$file" | read -r _ || echo "" >> "$output_file"
     else
         echo "[File $file not found]" >> "$output_file"
     fi
